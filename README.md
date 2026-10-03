@@ -68,3 +68,4 @@ kubectl create namespace app
 kubectl apply -f k8s/app.yaml
 ```
 (Cambia `<tu-usuario-docker>` en `k8s/app.yaml` por tu usuario de Docker Hub.)
+"# spring-demo-ci-cd" 
