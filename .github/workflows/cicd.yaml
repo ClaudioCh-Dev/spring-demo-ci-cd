@@ -1,13 +1,19 @@
-name: CI/CD Demo
+# Se ejecuta al hacer push (o merge de un PR) en develop o main.
+#   develop -> imagen :develop -> despliegue a STAGING
+#   main    -> imagen :latest  -> despliegue a PRODUCTION
+name: CI/CD
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, develop]
   workflow_dispatch:   # permite lanzarlo a mano desde Actions
 
+# Un solo pipeline a la vez por rama; no cancela un despliegue a medias
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -15,7 +21,10 @@ env:
 
 jobs:
   ci:
+    name: Test, build & push image
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -30,8 +39,21 @@ jobs:
       - name: Run tests
         run: ./mvnw -B verify
 
+      # Etiquetas de la imagen:
+      #   única e inmutable: <rama>-<sha corto>   ej. develop-3f2a1b9
+      #   móvil (canal):     develop o latest
+      - name: Calculate image tags
+        id: meta
+        run: |
+          if [ "$GITHUB_REF_NAME" = "main" ]; then CHANNEL=latest; else CHANNEL=develop; fi
+          echo "tag=$GITHUB_REF_NAME-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+
       - name: Build docker image
-        run: docker build -t $IMAGE:${{ github.sha }} .
+        run: |
+          docker build \
+            -t $IMAGE:${{ steps.meta.outputs.tag }} \
+            -t $IMAGE:${{ steps.meta.outputs.channel }} .
 
       - name: Docker login
         uses: docker/login-action@v3
@@ -40,21 +62,31 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Push docker image
-        run: docker push $IMAGE:${{ github.sha }}
+        run: docker push --all-tags $IMAGE
 
-  cd:
+  deploy-staging:
+    name: Deploy to staging
     needs: ci
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    environment: staging
     steps:
-      - name: AWS authentication
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
-          role-duration-seconds: 1200
-          role-session-name: ${{ github.sha }}
-          aws-region: us-east-1
-
-      - name: Update deployment
+      - name: Deploy
         run: |
-          aws eks update-kubeconfig --name ${{ secrets.CLUSTER_NAME }} --region us-east-1
-          kubectl set image deployment/springboot-deployment api=$IMAGE:${{ github.sha }} -n app
+          echo "Desplegando $IMAGE:${{ needs.ci.outputs.tag }} en STAGING"
+          # Despliegue real (cuando tengas un clúster), por ejemplo:
+          # kubectl set image deployment/springboot-deployment api=$IMAGE:${{ needs.ci.outputs.tag }} -n staging
+
+  deploy-production:
+    name: Deploy to production
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production   # en Settings > Environments puedes exigir aprobación manual
+    steps:
+      - name: Deploy
+        run: |
+          echo "Desplegando $IMAGE:${{ needs.ci.outputs.tag }} en PRODUCTION"
+          # Despliegue real en AWS EKS, por ejemplo:
+          # aws eks update-kubeconfig --name <cluster> --region us-east-1
+          # kubectl set image deployment/springboot-deployment api=$IMAGE:${{ needs.ci.outputs.tag }} -n app

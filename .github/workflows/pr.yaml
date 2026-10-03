@@ -1,13 +1,26 @@
+# Se ejecuta en cada Pull Request hacia main o develop.
+# Valida el código ANTES de que entre a la rama (no publica nada).
 name: PR checks
 
 on:
-  - pull_request
+  pull_request:
+    branches: [main, develop]
+
+# Si subes otro commit al mismo PR, cancela la ejecución anterior
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Permisos mínimos: solo leer el código
+permissions:
+  contents: read
 
 jobs:
-  unittest:
+  test:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Check out code
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Set up Java
@@ -17,5 +30,17 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Run unit tests
+      - name: Run tests
         run: ./mvnw -B verify
+
+  docker-build:
+    name: Docker build
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Solo comprueba que la imagen se construye; no la sube
+      - name: Build docker image
+        run: docker build -t springboot-demo:pr-check .
