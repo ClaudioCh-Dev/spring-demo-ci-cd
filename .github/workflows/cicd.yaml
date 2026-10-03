@@ -1,0 +1,59 @@
+name: CI/CD Demo
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE: ${{ secrets.DOCKER_USERNAME }}/springboot-demo
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        run: ./mvnw -B verify
+
+      - name: Build docker image
+        run: docker build -t $IMAGE:${{ github.sha }} .
+
+      - name: Docker login
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Push docker image
+        run: docker push $IMAGE:${{ github.sha }}
+
+  cd:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: AWS authentication
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
+          role-duration-seconds: 1200
+          role-session-name: ${{ github.sha }}
+          aws-region: us-east-1
+
+      - name: Update deployment
+        run: |
+          aws eks update-kubeconfig --name ${{ secrets.CLUSTER_NAME }} --region us-east-1
+          kubectl set image deployment/springboot-deployment api=$IMAGE:${{ github.sha }} -n app
