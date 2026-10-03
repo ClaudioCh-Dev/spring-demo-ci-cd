@@ -3,7 +3,8 @@ name: CI/CD Demo
 on:
   push:
     branches:
-      - master
+      - main
+  workflow_dispatch:   # permite lanzarlo a mano desde Actions
 
 permissions:
   id-token: write
